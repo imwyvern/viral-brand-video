@@ -682,10 +682,10 @@ def vary_prompt(base_prompt):
 
 def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
     headers = {"Authorization": f"Bearer {KLING_KEY}", "Content-Type": "application/json"}
-    full_neg = (neg_prompt or "blurry, text") + ", watermark, overlay text, subtitle, Chinese characters"
+    # Don't negate Chinese characters — brand labels contain Chinese text we want to KEEP
+    full_neg = (neg_prompt or "blurry") + ", watermark, overlay text, subtitle"
 
-    # VCE uses flat format (image_url at top level); ablai uses image_list.
-    # Try flat first, then image_list as fallback.
+    # VCE flat format with cfg_scale=0.5 for high fidelity to input frame
     flat_body = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
@@ -693,7 +693,9 @@ def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
         "aspect_ratio": "9:16",
         "duration": kling_duration(duration),
         "image_url": frame_url,
+        "cfg_scale": 0.5,
     }
+    # ablai format with explicit first_frame type
     list_body = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
@@ -701,6 +703,7 @@ def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
         "aspect_ratio": "9:16",
         "duration": kling_duration(duration),
         "image_list": [{"image_url": frame_url, "type": "first_frame"}],
+        "cfg_scale": 0.5,
     }
 
     for label, body in [("flat", flat_body), ("list", list_body)]:
