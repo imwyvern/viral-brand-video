@@ -1003,16 +1003,46 @@ def combined_brand_and_clean(vid_id, original_frame, brand_ref, analysis, out_di
     """Replace brand labels AND remove watermarks/subtitles in one Gemini call on the original frame.
     This preserves full image quality — no crop before brand editing."""
     placement = analysis.get("product_placement", "on table")
-    scene_type = analysis.get("scene_type", "static")
 
-    prompt = (
-        "Edit the first image: replace ALL bottle labels with the beer brand from the second image "
+    # Build content manually to control labels precisely.
+    # Gemini needs clear labels: scene to edit vs brand reference.
+    content = []
+    # Image 1: scene to edit
+    content.append({"type": "text", "text": "[Scene to edit]"})
+    with open(original_frame, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    ext = "png" if original_frame.endswith(".png") else "jpeg"
+    content.append({"type": "image_url", "image_url": {"url": f"data:image/{ext};base64,{b64}"}})
+    # Image 2: brand reference
+    content.append({"type": "text", "text": "[Brand reference — use this label for replacement]"})
+    with open(brand_ref, "rb") as f:
+        b64_brand = base64.b64encode(f.read()).decode()
+    ext_b = "png" if brand_ref.endswith(".png") else "jpeg"
+    content.append({"type": "image_url", "image_url": {"url": f"data:image/{ext_b};base64,{b64_brand}"}})
+    # Prompt
+    content.append({"type": "text", "text": (
+        "Edit the scene image: replace ALL bottle labels with the brand from the reference image "
         "(the product label/bottle). Also remove ALL Chinese text overlays, subtitles, watermarks, "
         "and platform logos. Keep everything else identical. No Chinese text in output. Photorealistic.\n"
         f"Product placement: {placement}."
-    )
+    )})
 
-    branded_data = gemini_edit(prompt, original_frame, brand_ref, retries=5)
+    cv = gemini_api(content, retries=5)
+    branded_data = None
+    if cv:
+        if isinstance(cv, list):
+            for part in cv:
+                if part.get("type") == "image_url":
+                    iu = part["image_url"]["url"]
+                    if iu.startswith("data:"):
+                        branded_data = base64.b64decode(iu.split(",", 1)[1])
+                    else:
+                        branded_data = requests.get(iu, timeout=60).content
+                    break
+        elif isinstance(cv, str):
+            m = re.search(r'data:image/\w+;base64,([A-Za-z0-9+/=]+)', cv)
+            if m:
+                branded_data = base64.b64decode(m.group(1))
     if branded_data and len(branded_data) > 10000:
         branded_path = str(Path(out_dir) / f"{vid_id}_branded.png")
         with open(branded_path, "wb") as f:
