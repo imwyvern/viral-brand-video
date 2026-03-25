@@ -396,17 +396,11 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
     working_frame = frame_path
 
     # ── Step 1: Gemini inpaint (ALWAYS runs — independent of analysis) ──
+    # NOTE: Keep prompt SHORT. VCE Gemini returns MALFORMED_FUNCTION_CALL on long prompts.
     print(f"  🧹 Step 1: Gemini text removal (unconditional)...")
     clean_data = gemini_edit(
-        "Edit this image: remove ALL text overlays visible in this image. This includes:\n"
-        "- Subtitles (Chinese or any language)\n"
-        "- Watermarks and platform logos (Douyin, TikTok, etc.)\n"
-        "- Username/ID text\n"
-        "- Any floating text that is NOT physically printed on a product label\n\n"
-        "Fill removed areas with the surrounding scene background seamlessly.\n"
-        "KEEP all physical objects exactly the same (bottles, glasses, table, hands).\n"
-        "KEEP text that is physically part of a product label/bottle.\n"
-        "The result must have ZERO overlay text.",
+        "Remove all Chinese text, subtitles, watermarks, and platform logos from this image. "
+        "Keep all physical objects and product labels the same. Fill removed areas with background.",
         frame_path
     )
 
@@ -433,11 +427,9 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
             if remaining:
                 print(f"  🔄 Retry: targeting specific text...")
                 time.sleep(5)
-                targets = ", ".join(f'"{t}"' for t in remaining[:5])
+                targets = ", ".join(remaining[:3])
                 retry_data = gemini_edit(
-                    f"Edit this image: remove these specific overlay texts: {targets}. "
-                    "Fill the removed areas with the surrounding background. "
-                    "Keep everything else exactly the same. Zero overlay text in result.",
+                    f"Remove these texts from the image: {targets}. Fill with background.",
                     clean_path
                 )
                 if retry_data and len(retry_data) > 10000:
