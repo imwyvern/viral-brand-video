@@ -464,6 +464,122 @@ def qc_branded_frame(vid_id, branded_path, brand_config):
 
 
 # ═══════════════════════════════════════════
+# Phase 4.5: First-frame background variation
+# ═══════════════════════════════════════════
+
+# Background variation presets — each creates a visually distinct scene
+# while keeping the product/bottle identical
+BG_VARIATIONS = [
+    {
+        "name": "original",
+        "prompt": None,  # skip — use branded frame as-is
+    },
+    {
+        "name": "warm_wood",
+        "prompt": (
+            "Edit ONLY the background/surface in this image. "
+            "Change the table/surface to warm dark wood grain. "
+            "Add soft warm candlelight reflections. "
+            "Keep ALL bottles, glasses, and products EXACTLY the same — same position, same label, same lighting on the product. "
+            "Only the background and surface material should change."
+        ),
+    },
+    {
+        "name": "marble_bar",
+        "prompt": (
+            "Edit ONLY the background/surface. "
+            "Change to a dark marble bar counter with subtle veining. "
+            "Add a blurred bar shelf with colored bottles in the far background. "
+            "Keep ALL products/bottles EXACTLY the same — same position, same label, same angle."
+        ),
+    },
+    {
+        "name": "outdoor_evening",
+        "prompt": (
+            "Edit ONLY the background. "
+            "Change to an outdoor evening terrace scene — string lights overhead, blurred city lights in distance. "
+            "Keep the surface/table and ALL products EXACTLY the same."
+        ),
+    },
+    {
+        "name": "cozy_fabric",
+        "prompt": (
+            "Edit ONLY the background/surface. "
+            "Change the surface to a dark linen or velvet fabric texture. "
+            "Background becomes a cozy dim room with warm bokeh lights. "
+            "Keep ALL bottles and products EXACTLY the same."
+        ),
+    },
+    {
+        "name": "concrete_industrial",
+        "prompt": (
+            "Edit ONLY the background/surface. "
+            "Change to a raw concrete surface with industrial aesthetic. "
+            "Background: exposed brick wall, dim Edison bulbs. "
+            "Keep ALL products EXACTLY the same."
+        ),
+    },
+    {
+        "name": "rainy_window",
+        "prompt": (
+            "Edit ONLY the background. "
+            "Add a rain-streaked window behind the scene with blurred neon reflections. "
+            "Keep the surface and ALL products EXACTLY the same."
+        ),
+    },
+    {
+        "name": "bookshelf",
+        "prompt": (
+            "Edit ONLY the background. "
+            "Change background to a dim bookshelf with warm reading lamp glow. "
+            "Keep surface and ALL products EXACTLY the same."
+        ),
+    },
+    {
+        "name": "neon_bar",
+        "prompt": (
+            "Edit ONLY the background. "
+            "Add neon signs (warm amber/red tones) glowing in the blurred background. "
+            "Dark moody bar atmosphere. "
+            "Keep ALL products EXACTLY the same."
+        ),
+    },
+]
+
+
+def vary_first_frame(vid_id, branded_path, out_dir, variation_name=None):
+    """
+    Generate a background-varied version of the branded frame.
+    The product stays identical; only background/surface changes.
+
+    This is the most effective anti-duplicate layer because it creates
+    genuinely different visual content that passes content-similarity checks.
+    """
+    if variation_name:
+        var = next((v for v in BG_VARIATIONS if v["name"] == variation_name), None)
+    else:
+        # Random selection, excluding "original"
+        var = random.choice([v for v in BG_VARIATIONS if v["prompt"]])
+
+    if not var or not var["prompt"]:
+        print(f"  🖼️ Background: original (no variation)")
+        return branded_path, "original"
+
+    print(f"  🖼️ Background variation: {var['name']}...")
+    varied_path = str(out_dir / f"{vid_id}_bg_{var['name']}.png")
+
+    varied_data = gemini_edit(var["prompt"], branded_path)
+    if varied_data and len(varied_data) > 10000:
+        with open(varied_path, "wb") as f:
+            f.write(varied_data)
+        print(f"  ✅ {len(varied_data)//1024}KB")
+        return varied_path, var["name"]
+
+    print(f"  ⚠️ Variation failed, using original")
+    return branded_path, "original"
+
+
+# ═══════════════════════════════════════════
 # Phase 5: Prompt variation
 # ═══════════════════════════════════════════
 
@@ -838,10 +954,15 @@ def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None):
         branded = edit_brand_frame(vid_id, clean, analysis, brand_ref, out_dir)
     time.sleep(3)
 
+    # Phase 4.5: Background variation
+    print(f"  Phase 4.5: Background Variation")
+    varied_frame, bg_name = vary_first_frame(vid_id, branded, out_dir)
+    time.sleep(3)
+
     # Phase 5 + 6
     print(f"  Phase 5-6: Prompt Variation + Kling i2v")
     varied = vary_prompt(analysis.get("i2v_prompt", "Cinematic product scene. Warm lighting."))
-    frame_url = upload_catbox(branded)
+    frame_url = upload_catbox(varied_frame)
     tid = submit_kling(vid_id, frame_url, varied, analysis.get("negative_prompt", ""), analysis["duration"])
     if not tid:
         return {"status": "failed", "fail_step": "kling_submit", "analysis": analysis}
@@ -870,6 +991,8 @@ def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None):
     print(f"  Phase 10: Subtitle Overlay")
     final = overlay_subtitle(vid_id, with_audio, copy["subtitle"], out_dir, font_path)
     print(f"    ✅ {os.path.getsize(final)//1024}KB")
+
+    dedup_info["background"] = bg_name
 
     return {
         "status": "complete",

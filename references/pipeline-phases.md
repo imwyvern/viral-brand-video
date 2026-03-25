@@ -141,6 +141,40 @@ ffmpeg -i input.jpg -vf \
 
 ---
 
+## Phase 4.5: First-Frame Background Variation {#phase-4-5}
+
+**The most effective anti-duplicate layer.** Changes the background/surface while keeping the product identical.
+
+### Why This Matters
+
+Post-processing dedup (color shift, speed, crop) changes pixels but not content. Platform algorithms
+detect content similarity, not encoding differences. Changing the background creates genuinely
+different visual content.
+
+### 8 Background Presets
+| Name | Description |
+|------|-------------|
+| warm_wood | Dark wood grain surface + candlelight reflections |
+| marble_bar | Dark marble counter + blurred bar shelf background |
+| outdoor_evening | Terrace scene + string lights + city lights |
+| cozy_fabric | Velvet/linen surface + warm bokeh |
+| concrete_industrial | Raw concrete + exposed brick + Edison bulbs |
+| rainy_window | Rain-streaked window + neon reflections |
+| bookshelf | Dim bookshelf + reading lamp glow |
+| neon_bar | Neon signs (amber/red) + dark moody bar |
+
+### How It Works
+- Gemini edit with strict constraint: "Edit ONLY the background. Keep ALL products EXACTLY the same."
+- Product position, label, angle, lighting on product stay identical
+- Only background material, scene context, and ambient lighting change
+- If variation fails → fallback to original branded frame
+
+### Dedup Impact
+Same product + 8 different backgrounds = 8 visually distinct first frames → 8 completely different Kling outputs.
+Combined with prompt variation (343) → 8 × 343 = 2,744 unique combinations.
+
+---
+
 ## Phase 5: Prompt Variation {#phase-5}
 
 ### Pool Dimensions

@@ -114,6 +114,10 @@ Scene-aware prompt (static/pouring/handheld) + dual-image mode (brand ref + clea
 
 Checks brand visibility AND watermark residue. Auto-retry on failure.
 
+### Phase 4.5: Background Variation (key anti-duplicate layer)
+
+8 background presets (wood/marble/outdoor/fabric/concrete/rain/bookshelf/neon) — changes scene context while keeping product identical. This is the most effective dedup because it creates genuinely different visual content, not just pixel-level tweaks.
+
 ### Phase 5: Prompt Variation
 
 7 cameras × 7 lightings × 7 atmospheres = 343 unique combinations per scene.
@@ -122,9 +126,13 @@ Checks brand visibility AND watermark residue. Auto-retry on failure.
 
 `kling-v3-omni`, 9:16, 5/10/15s based on reference duration.
 
-### Phase 7: Deduplication (6-layer)
+### Phase 7: Post-processing Deduplication (6-layer)
 
 Color shift (8 presets) × speed (±5%) × crop (0-8px) × CRF (21-25) × GOP (24-72) × subtitle style.
+
+### Combined Dedup Capacity
+
+8 backgrounds × 343 prompt combos × 8 colors × continuous(speed/crop/CRF/GOP) = effectively unlimited unique videos from a single reference.
 
 ### Phase 8: Background Audio
 
