@@ -682,31 +682,27 @@ def vary_prompt(base_prompt):
 
 def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
     headers = {"Authorization": f"Bearer {KLING_KEY}", "Content-Type": "application/json"}
-    # Don't negate Chinese characters — brand labels contain Chinese text we want to KEEP
-    full_neg = (neg_prompt or "blurry") + ", watermark, overlay text, subtitle"
-
-    # VCE flat format with cfg_scale=0.5 for high fidelity to input frame
-    flat_body = {
-        "model_name": "kling-v3-omni",
-        "prompt": prompt,
-        "negative_prompt": full_neg,
-        "aspect_ratio": "9:16",
-        "duration": kling_duration(duration),
-        "image_url": frame_url,
-        "cfg_scale": 0.5,
-    }
-    # ablai format with explicit first_frame type
+    # Use image_list + first_frame format — this makes Kling preserve the input frame
+    # faithfully, including brand labels. Flat format (image_url at top level) causes
+    # Kling to treat it as a style reference and redraw labels.
+    # No negative_prompt field — put constraints in prompt instead.
     list_body = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
-        "negative_prompt": full_neg,
+        "aspect_ratio": "9:16",
+        "duration": str(kling_duration(duration)),
+        "image_list": [{"image_url": frame_url, "type": "first_frame"}],
+    }
+    # Flat format as fallback only
+    flat_body = {
+        "model_name": "kling-v3-omni",
+        "prompt": prompt,
         "aspect_ratio": "9:16",
         "duration": kling_duration(duration),
-        "image_list": [{"image_url": frame_url, "type": "first_frame"}],
-        "cfg_scale": 0.5,
+        "image_url": frame_url,
     }
 
-    for label, body in [("flat", flat_body), ("list", list_body)]:
+    for label, body in [("list", list_body), ("flat", flat_body)]:
         try:
             r = http_session().post(f"{KLING_API}/kling/v1/videos/omni-video", headers=headers, json=body, timeout=60)
             d = r.json()
