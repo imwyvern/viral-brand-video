@@ -685,10 +685,23 @@ def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
     # Use image_list + first_frame format — this makes Kling preserve the input frame
     # faithfully, including brand labels. Flat format (image_url at top level) causes
     # Kling to treat it as a style reference and redraw labels.
-    # No negative_prompt field — put constraints in prompt instead.
+    #
+    # negative_prompt targets hallucinated text (Kling adds random Chinese on bottles)
+    # but NOT the brand's own Chinese — those are baked into the first frame.
+    # cfg_scale 0.7 = higher fidelity to first frame.
+    neg = (
+        "Chinese text, Chinese characters, kanji, hanzi, text overlay, subtitle, "
+        "watermark, words on bottle, label text change, new text appearing, "
+        "blurry, deformed"
+    )
+    # Append "bottle labels remain exactly unchanged from first frame" to prompt
+    enhanced_prompt = prompt.rstrip(".") + ". Bottle labels remain exactly unchanged from first frame."
+
     list_body = {
         "model_name": "kling-v3-omni",
-        "prompt": prompt,
+        "prompt": enhanced_prompt,
+        "negative_prompt": neg,
+        "cfg_scale": 0.7,
         "aspect_ratio": "9:16",
         "duration": str(kling_duration(duration)),
         "image_list": [{"image_url": frame_url, "type": "first_frame"}],
@@ -696,7 +709,9 @@ def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
     # Flat format as fallback only
     flat_body = {
         "model_name": "kling-v3-omni",
-        "prompt": prompt,
+        "prompt": enhanced_prompt,
+        "negative_prompt": neg,
+        "cfg_scale": 0.7,
         "aspect_ratio": "9:16",
         "duration": kling_duration(duration),
         "image_url": frame_url,
