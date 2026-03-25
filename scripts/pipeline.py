@@ -992,7 +992,7 @@ def overlay_subtitle(vid_id, video_path, subtitle_text, out_dir, font_path=None)
 # Main orchestrator
 # ═══════════════════════════════════════════
 
-def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None):
+def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None, force=False):
     """Run full pipeline on a single video. Returns result dict."""
     vid_id = Path(video_path).stem[:10]
     out_dir = Path(out_dir)
@@ -1015,9 +1015,9 @@ def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None):
     print(f"    Scene: {analysis.get('scene', '?')[:50]}")
     print(f"    Screen: {scr.get('verdict', '?')} | Feasible: {feas.get('verdict', '?')} ({feas.get('overall_score', 0)}/10)")
 
-    if scr.get("verdict") == "REJECT":
+    if scr.get("verdict") == "REJECT" and not force:
         return {"status": "rejected", "reason": "screening", "analysis": analysis}
-    if feas.get("verdict") == "NOT_FEASIBLE":
+    if feas.get("verdict") == "NOT_FEASIBLE" and not force:
         return {"status": "rejected", "reason": "brand_infeasible", "analysis": analysis}
 
     time.sleep(3)
