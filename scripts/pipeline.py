@@ -35,6 +35,8 @@ GEMINI_API = os.environ.get("VBV_GEMINI_API", "")
 GEMINI_KEY = os.environ.get("VBV_GEMINI_KEY", "")
 KLING_API  = os.environ.get("VBV_KLING_API", "")
 KLING_KEY  = os.environ.get("VBV_KLING_KEY", "")
+GPT_IMG_API = os.environ.get("VBV_GPT_IMG_API", "https://api.vectorengine.ai")
+GPT_IMG_KEY = os.environ.get("VBV_GPT_IMG_KEY", "")
 
 DEFAULT_FONT = "/System/Library/Fonts/STHeiti Medium.ttc"
 
@@ -173,6 +175,32 @@ def load_brand_config(path):
 # ═══════════════════════════════════════════
 # Gemini API helpers
 # ═══════════════════════════════════════════
+
+def gpt_image_edit(prompt, image_path, retries=3):
+    """Edit image via GPT-Image-1 (VCE .ai endpoint). Returns raw bytes or None."""
+    for attempt in range(retries):
+        try:
+            with open(image_path, "rb") as f:
+                resp = requests.post(
+                    f"{GPT_IMG_API}/v1/images/edits",
+                    headers={"Authorization": f"Bearer {GPT_IMG_KEY}"},
+                    files={"image": ("frame.jpg", f, "image/jpeg")},
+                    data={"model": "gpt-image-1-all", "prompt": prompt, "size": "1024x1024"},
+                    timeout=120,
+                )
+            d = resp.json()
+            if "data" in d and d["data"]:
+                item = d["data"][0]
+                if "b64_json" in item:
+                    return base64.b64decode(item["b64_json"])
+                elif "url" in item:
+                    return requests.get(item["url"], timeout=60).content
+            print(f"    ⚠️ GPT-Image attempt {attempt+1}: {str(d)[:120]}")
+        except Exception as e:
+            print(f"    ⚠️ GPT-Image attempt {attempt+1}: {e}")
+        time.sleep(min(15 * (2 ** attempt), 60))
+    return None
+
 
 def gemini_api(content, retries=3):
     for attempt in range(retries):
@@ -396,16 +424,22 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
     clean_path = str(out_dir / f"{vid_id}_clean.png")
     working_frame = frame_path
 
-    # ── Step 1: Gemini inpaint (ALWAYS runs — independent of analysis) ──
-    # NOTE: Keep prompt SHORT. VCE Gemini returns MALFORMED_FUNCTION_CALL on long prompts.
-    # Retry with longer backoff — VCE API has SSL reset issues on rapid calls.
-    print(f"  🧹 Step 1: Gemini text removal (unconditional)...")
-    clean_data = gemini_edit(
+    # ── Step 1: Text removal (ALWAYS runs — independent of analysis) ──
+    # Primary: GPT-Image-1 (VCE .ai) — reliable single-image editing
+    # Fallback: Gemini (VCE .cn) — keep prompt SHORT to avoid MALFORMED_FUNCTION_CALL
+    inpaint_prompt = (
         "Remove all Chinese text, subtitles, watermarks, and platform logos from this image. "
-        "Keep all physical objects and product labels the same. Fill removed areas with background.",
-        frame_path,
-        retries=5
+        "Keep all physical objects and product labels the same. Fill removed areas with background."
     )
+
+    clean_data = None
+    if GPT_IMG_KEY:
+        print(f"  🧹 Step 1a: GPT-Image-1 text removal...")
+        clean_data = gpt_image_edit(inpaint_prompt, frame_path, retries=3)
+
+    if not clean_data or len(clean_data) <= 10000:
+        print(f"  🧹 Step 1b: Gemini text removal (fallback)...")
+        clean_data = gemini_edit(inpaint_prompt, frame_path, retries=5)
 
     if clean_data and len(clean_data) > 10000:
         with open(clean_path, "wb") as f:
