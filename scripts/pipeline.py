@@ -185,12 +185,13 @@ def gemini_api(content, retries=3):
             d = r.json()
             if "choices" not in d:
                 print(f"    ⚠️ API attempt {attempt+1}: {str(d)[:100]}")
-                time.sleep(15)
+                # Exponential backoff: 15, 30, 60, 60, 60...
+                time.sleep(min(15 * (2 ** attempt), 60))
                 continue
             return d["choices"][0]["message"].get("content", "")
         except Exception as e:
             print(f"    ⚠️ API attempt {attempt+1}: {e}")
-            time.sleep(15)
+            time.sleep(min(15 * (2 ** attempt), 60))
     return None
 
 
@@ -397,11 +398,13 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
 
     # ── Step 1: Gemini inpaint (ALWAYS runs — independent of analysis) ──
     # NOTE: Keep prompt SHORT. VCE Gemini returns MALFORMED_FUNCTION_CALL on long prompts.
+    # Retry with longer backoff — VCE API has SSL reset issues on rapid calls.
     print(f"  🧹 Step 1: Gemini text removal (unconditional)...")
     clean_data = gemini_edit(
         "Remove all Chinese text, subtitles, watermarks, and platform logos from this image. "
         "Keep all physical objects and product labels the same. Fill removed areas with background.",
-        frame_path
+        frame_path,
+        retries=5
     )
 
     if clean_data and len(clean_data) > 10000:
@@ -444,12 +447,21 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
         print(f"  ⚠️ Inpaint failed (no output or too small)")
         # Even if inpaint fails, we still have crop below
 
-    # ── Step 3: ffmpeg crop — ALWAYS runs (platform logo zones) ──
-    print(f"  🔧 Step 3: ffmpeg crop (top 12% + bottom 5%)...")
+    # ── Step 3: ffmpeg crop — ALWAYS runs ──
+    # If inpaint succeeded: light crop (top 12% + bottom 5%) for logo zones only
+    # If inpaint failed: aggressive crop (top 35% + bottom 5%) to cover subtitle zone too
+    inpaint_succeeded = (working_frame != frame_path)
+    if inpaint_succeeded:
+        crop_top, crop_keep = 0.12, 0.83
+        print(f"  🔧 Step 3: ffmpeg crop (top 12% + bottom 5% — light, inpaint handled text)...")
+    else:
+        crop_top, crop_keep = 0.35, 0.60
+        print(f"  🔧 Step 3: ffmpeg crop (top 35% + bottom 5% — aggressive, inpaint failed)...")
+
     crop_path = str(out_dir / f"{vid_id}_cropped.png")
     subprocess.run([
         "ffmpeg", "-y", "-i", working_frame, "-vf",
-        "crop=iw:ih*0.83:0:ih*0.12,scale=720:1280:force_original_aspect_ratio=decrease,"
+        f"crop=iw:ih*{crop_keep}:0:ih*{crop_top},scale=720:1280:force_original_aspect_ratio=decrease,"
         "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
         "-q:v", "1", crop_path
     ], capture_output=True)
