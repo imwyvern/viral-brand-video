@@ -225,13 +225,10 @@ def gemini_api(content, retries=3):
 
 def gemini_edit(prompt, *image_paths, retries=3):
     content = []
-    labels = ["[Reference]", "[Image to edit]", "[Image 3]", "[Image 4]"]
-    for i, p in enumerate(image_paths):
+    for p in image_paths:
         with open(p, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         ext = "png" if str(p).endswith(".png") else "jpeg"
-        if len(image_paths) > 1 and i < len(labels):
-            content.append({"type": "text", "text": labels[i]})
         content.append({"type": "image_url", "image_url": {"url": f"data:image/{ext};base64,{b64}"}})
     content.append({"type": "text", "text": prompt})
 
@@ -428,13 +425,13 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
     working_frame = frame_path
 
     # ── Step 1: Text removal (ALWAYS runs — independent of analysis) ──
-    # Uses dual-image mode (same image twice) to bypass VCE single-image MALFORMED_FUNCTION_CALL bug.
+    # Single-image Gemini inpaint. Keep prompt SHORT.
     clean_data = None
-    print(f"  🧹 Step 1: Gemini text removal (dual-image mode)...")
+    print(f"  🧹 Step 1: Gemini text removal (unconditional)...")
     clean_data = gemini_edit(
-        "Remove ALL Chinese text overlays, subtitles, and watermarks from the second image. "
-        "Keep everything else. Fill removed areas with background.",
-        frame_path, frame_path,  # same image twice → dual-image mode
+        "Remove all Chinese text, subtitles, watermarks, and platform logos from this image. "
+        "Keep all physical objects and product labels the same. Fill removed areas with background.",
+        frame_path,
         retries=5
     )
 
