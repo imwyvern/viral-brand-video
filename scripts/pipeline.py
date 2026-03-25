@@ -202,11 +202,11 @@ def gpt_image_edit(prompt, image_path, retries=3):
     return None
 
 
-def gemini_api(content, retries=3):
+def gemini_api(content, retries=3, model="gemini-3.1-flash-image-preview"):
     for attempt in range(retries):
         try:
             headers = {"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json"}
-            body = {"model": "gemini-3.1-flash-image-preview",
+            body = {"model": model,
                     "messages": [{"role": "user", "content": content}]}
             r = http_session().post(f"{GEMINI_API}/v1/chat/completions",
                                     headers=headers, json=body, timeout=120)
@@ -354,13 +354,17 @@ Output JSON with THREE sections — analysis, screening, AND brand feasibility:
 Screening: overlay>40%→REJECT, face>30%→REJECT
 Feasibility: overall<4=NOT_FEASIBLE, 4-6=RISKY, >6=FEASIBLE"""})
 
-    cv = gemini_api(content, retries=3)
+    # Use pro model for analysis (text-only task, more reliable than flash-image)
+    cv = gemini_api(content, retries=3, model="gemini-3.1-pro-preview")
     analysis = _parse_json(cv) if cv else {}
 
     if not analysis.get("scene"):
+        # Retry with flash-image as fallback
+        cv = gemini_api(content, retries=2)
+        analysis = _parse_json(cv) if cv else {}
+
+    if not analysis.get("scene"):
         # Analysis failed → ASSUME watermarks exist (safe default).
-        # Better to waste one API call cleaning a clean frame than to skip
-        # watermark removal on a dirty frame.
         print(f"    ⚠️ Analysis fallback (API parse failed) — assuming watermarks present")
         analysis = {
             "scene": "product scene (fallback)", "scene_type": "static",
@@ -463,8 +467,8 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
                 time.sleep(5)
                 targets = ", ".join(remaining[:3])
                 retry_data = gemini_edit(
-                    f"Remove these texts from the image: {targets}. Fill with background.",
-                    clean_path
+                    f"Remove these texts from the second image: {targets}. Fill with background.",
+                    clean_path, clean_path,
                 )
                 if retry_data and len(retry_data) > 10000:
                     retry_path = str(out_dir / f"{vid_id}_clean2.png")
