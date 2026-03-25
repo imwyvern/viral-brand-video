@@ -425,21 +425,15 @@ def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
     working_frame = frame_path
 
     # ── Step 1: Text removal (ALWAYS runs — independent of analysis) ──
-    # Primary: GPT-Image-1 (VCE .ai) — reliable single-image editing
-    # Fallback: Gemini (VCE .cn) — keep prompt SHORT to avoid MALFORMED_FUNCTION_CALL
+    # Primary: Gemini (VCE .cn) — keep prompt SHORT to avoid MALFORMED_FUNCTION_CALL
     inpaint_prompt = (
         "Remove all Chinese text, subtitles, watermarks, and platform logos from this image. "
         "Keep all physical objects and product labels the same. Fill removed areas with background."
     )
 
     clean_data = None
-    if GPT_IMG_KEY:
-        print(f"  🧹 Step 1a: GPT-Image-1 text removal...")
-        clean_data = gpt_image_edit(inpaint_prompt, frame_path, retries=3)
-
-    if not clean_data or len(clean_data) <= 10000:
-        print(f"  🧹 Step 1b: Gemini text removal (fallback)...")
-        clean_data = gemini_edit(inpaint_prompt, frame_path, retries=5)
+    print(f"  🧹 Step 1: Gemini text removal (unconditional)...")
+    clean_data = gemini_edit(inpaint_prompt, frame_path, retries=5)
 
     if clean_data and len(clean_data) > 10000:
         with open(clean_path, "wb") as f:
