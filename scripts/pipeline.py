@@ -996,6 +996,43 @@ def overlay_subtitle(vid_id, video_path, subtitle_text, out_dir, font_path=None)
 
 
 # ═══════════════════════════════════════════
+# Phase 2+3 Combined: Brand replace + watermark removal
+# ═══════════════════════════════════════════
+
+def combined_brand_and_clean(vid_id, original_frame, brand_ref, analysis, out_dir):
+    """Replace brand labels AND remove watermarks/subtitles in one Gemini call on the original frame.
+    This preserves full image quality — no crop before brand editing."""
+    placement = analysis.get("product_placement", "on table")
+    scene_type = analysis.get("scene_type", "static")
+
+    prompt = (
+        "Edit the first image: replace ALL bottle labels with the beer brand from the second image "
+        "(the product label/bottle). Also remove ALL Chinese text overlays, subtitles, watermarks, "
+        "and platform logos. Keep everything else identical. No Chinese text in output. Photorealistic.\n"
+        f"Product placement: {placement}."
+    )
+
+    branded_data = gemini_edit(prompt, original_frame, brand_ref, retries=5)
+    if branded_data and len(branded_data) > 10000:
+        branded_path = str(Path(out_dir) / f"{vid_id}_branded.png")
+        with open(branded_path, "wb") as f:
+            f.write(branded_data)
+
+        # Light crop to clean edges (top 12% + bottom 5%) — always apply
+        cropped_path = str(Path(out_dir) / f"{vid_id}_cropped.png")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", branded_path, "-vf",
+            "crop=iw:ih*0.83:0:ih*0.12,scale=720:1280:force_original_aspect_ratio=decrease,"
+            "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
+            "-q:v", "1", cropped_path
+        ], capture_output=True)
+        if os.path.exists(cropped_path) and os.path.getsize(cropped_path) > 10000:
+            return cropped_path
+        return branded_path
+    return None
+
+
+# ═══════════════════════════════════════════
 # Main orchestrator
 # ═══════════════════════════════════════════
 
@@ -1029,14 +1066,16 @@ def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None, f
 
     time.sleep(3)
 
-    # Phase 2
-    print(f"  Phase 2: Watermark Removal")
-    clean = remove_watermarks(vid_id, first_frame, scr, out_dir)
-    time.sleep(3)
-
-    # Phase 3
-    print(f"  Phase 3: Brand Frame Edit")
-    branded = edit_brand_frame(vid_id, clean, analysis, brand_ref, out_dir)
+    # Phase 2+3 Combined: Brand Replace + Watermark Removal in ONE step on original frame
+    # This preserves full image quality (no crop before brand edit)
+    print(f"  Phase 2+3: Brand Replace + Watermark Removal (combined)")
+    branded = combined_brand_and_clean(vid_id, first_frame, brand_ref, analysis, out_dir)
+    if not branded:
+        # Fallback: try separate steps
+        print(f"    ⚠️ Combined failed, trying separate steps...")
+        clean = remove_watermarks(vid_id, first_frame, scr, out_dir)
+        time.sleep(3)
+        branded = edit_brand_frame(vid_id, clean, analysis, brand_ref, out_dir)
     if not branded:
         return {"status": "failed", "fail_step": "brand_edit", "analysis": analysis}
     print(f"    ✅ {os.path.getsize(branded)//1024}KB")
@@ -1048,9 +1087,9 @@ def run_pipeline(video_path, brand_ref, brand_config, out_dir, font_path=None, f
     print(f"    Brand: {'✅' if qc.get('brand_visible') else '❌'} ({qc.get('brand_confidence', 0)}/10)")
 
     if not qc.get("overall_pass") and not qc.get("brand_visible"):
-        print(f"    🔄 Retrying...")
+        print(f"    🔄 Retrying combined...")
         time.sleep(5)
-        branded = edit_brand_frame(vid_id, clean, analysis, brand_ref, out_dir)
+        branded = combined_brand_and_clean(vid_id, first_frame, brand_ref, analysis, out_dir)
     time.sleep(3)
 
     # Phase 4.5: Background variation
