@@ -326,13 +326,23 @@ Feasibility: overall<4=NOT_FEASIBLE, 4-6=RISKY, >6=FEASIBLE"""})
     analysis = _parse_json(cv) if cv else {}
 
     if not analysis.get("scene"):
+        # Analysis failed → ASSUME watermarks exist (safe default).
+        # Better to waste one API call cleaning a clean frame than to skip
+        # watermark removal on a dirty frame.
+        print(f"    ⚠️ Analysis fallback (API parse failed) — assuming watermarks present")
         analysis = {
-            "scene": "product scene", "scene_type": "static",
+            "scene": "product scene (fallback)", "scene_type": "static",
             "camera_movement": "slow push", "lighting": "warm",
             "product_placement": "on table", "original_subtitle": "",
             "i2v_prompt": "Cinematic product scene. Camera slowly pushes forward. Warm ambient lighting.",
             "negative_prompt": "rapid movement, text, watermark",
-            "screening": {"verdict": "PASS", "overlay_coverage_pct": 0, "overlay_types": [], "overlay_texts": []},
+            "screening": {
+                "verdict": "WARN",
+                "overlay_coverage_pct": 15,
+                "overlay_types": ["watermark", "subtitle"],
+                "overlay_texts": ["(analysis failed — assuming overlays present)"],
+                "analysis_failed": True,
+            },
             "brand_feasibility": {"overall_score": 5, "verdict": "RISKY", "reason": "analysis unavailable"},
         }
 
@@ -373,54 +383,80 @@ def _parse_json(cv):
 # Phase 2: Watermark removal
 # ═══════════════════════════════════════════
 
-def remove_watermarks(vid_id, frame_path, screening, out_dir):
+def remove_watermarks(vid_id, frame_path, screening, out_dir, force=False):
+    """
+    Remove watermarks from a frame. Always runs at minimum Tier 2 (crop) because:
+    - Platform logos (Douyin/TikTok) are in fixed positions (top-left, bottom)
+    - Analysis can miss them or fail entirely
+    - Cropping is free (local ffmpeg) and guaranteed to remove fixed-position overlays
+    
+    Tier 1 (Gemini inpaint) runs when overlays are detected — handles mid-frame text.
+    Tier 2 (ffmpeg crop) ALWAYS runs — removes top 12% + bottom 5% (logo zones).
+    """
     overlay_pct = screening.get("overlay_coverage_pct", 0)
-    has_overlays = overlay_pct > 0 or screening.get("overlay_types")
+    has_overlays = overlay_pct > 0 or screening.get("overlay_types") or force
+    analysis_failed = screening.get("analysis_failed", False)
 
-    if not has_overlays:
-        print(f"  ✅ No watermarks detected")
-        return frame_path
+    working_frame = frame_path
 
-    clean_path = str(out_dir / f"{vid_id}_clean.png")
-    overlay_texts = screening.get("overlay_texts", [])
+    # Tier 1: Gemini AI inpaint (for mid-frame text/subtitles)
+    if has_overlays:
+        clean_path = str(out_dir / f"{vid_id}_clean.png")
+        overlay_texts = screening.get("overlay_texts", [])
+        real_texts = [t for t in overlay_texts if not t.startswith("(analysis failed")]
 
-    # Tier 1: Gemini AI inpaint
-    print(f"  🧹 Tier 1: Gemini inpaint...")
-    overlay_desc = ", ".join(overlay_texts[:5]) if overlay_texts else "all watermarks, subtitles, platform logos"
-    clean_data = gemini_edit(
-        f"Edit this image: remove ALL overlay text, subtitles, watermarks, username text, platform logos. "
-        f"Specifically remove: {overlay_desc}. "
-        "Fill removed areas with surrounding scene background. Keep all physical objects exactly the same. "
-        "The result must have NO text overlays whatsoever.",
-        frame_path
-    )
+        if real_texts or analysis_failed:
+            print(f"  🧹 Tier 1: Gemini inpaint...")
+            if real_texts:
+                overlay_desc = ", ".join(real_texts[:5])
+            else:
+                overlay_desc = "all watermarks, subtitles, platform logos, username text, douyin IDs"
 
-    if clean_data and len(clean_data) > 10000:
-        with open(clean_path, "wb") as f:
-            f.write(clean_data)
-        qc = gemini_json(
-            "Check this image for ANY remaining watermarks, logos, overlay text, subtitles, or platform IDs. "
-            "JSON: {\"has_watermarks\":true/false, \"remaining\":[\"desc...\"]}",
-            clean_path
-        )
-        if not qc.get("has_watermarks", True):
-            print(f"  ✅ Gemini clean: {len(clean_data)//1024}KB (verified)")
-            return clean_path
-        print(f"  ⚠️ Residue: {qc.get('remaining', [])}")
+            clean_data = gemini_edit(
+                f"Edit this image: remove ALL overlay text, subtitles, watermarks, username text, platform logos, "
+                f"douyin/tiktok watermarks, user IDs. "
+                f"Specifically remove: {overlay_desc}. "
+                "Fill removed areas with surrounding scene background. Keep all physical objects exactly the same. "
+                "The result must have NO text overlays whatsoever.",
+                frame_path
+            )
 
-    # Tier 2: ffmpeg crop
-    print(f"  🔧 Tier 2: ffmpeg crop...")
+            if clean_data and len(clean_data) > 10000:
+                with open(clean_path, "wb") as f:
+                    f.write(clean_data)
+                # Verify
+                qc = gemini_json(
+                    "Check this image for ANY remaining watermarks, logos, overlay text, subtitles, or platform IDs. "
+                    "JSON: {\"has_watermarks\":true/false, \"remaining\":[\"desc...\"]}",
+                    clean_path
+                )
+                if not qc.get("has_watermarks", True):
+                    print(f"  ✅ Gemini clean: {len(clean_data)//1024}KB (verified)")
+                    working_frame = clean_path
+                else:
+                    print(f"  ⚠️ Residue: {qc.get('remaining', [])}")
+                    # Still use it if it's at least partially cleaned
+                    working_frame = clean_path
+    else:
+        print(f"  ℹ️ No mid-frame overlays detected")
+
+    # Tier 2: ffmpeg crop — ALWAYS runs (removes fixed-position platform logos)
+    print(f"  🔧 Tier 2: ffmpeg crop (top 12% + bottom 5%)...")
     crop_path = str(out_dir / f"{vid_id}_cropped.png")
     subprocess.run([
-        "ffmpeg", "-y", "-i", frame_path, "-vf",
+        "ffmpeg", "-y", "-i", working_frame, "-vf",
         "crop=iw:ih*0.83:0:ih*0.12,scale=720:1280:force_original_aspect_ratio=decrease,"
         "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
         "-q:v", "1", crop_path
     ], capture_output=True)
 
     if os.path.exists(crop_path) and os.path.getsize(crop_path) > 10000:
-        print(f"  ✅ Cropped: top 12% + bottom 5%")
+        print(f"  ✅ Cropped: {os.path.getsize(crop_path)//1024}KB")
         return crop_path
+
+    # Fallback: at least return whatever we have
+    if working_frame != frame_path:
+        return working_frame
 
     print(f"  ⚠️ All tiers failed, using original")
     return frame_path
