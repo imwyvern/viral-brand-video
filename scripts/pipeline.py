@@ -33,7 +33,7 @@ from urllib3.util.retry import Retry
 
 GEMINI_API = os.environ.get("VBV_GEMINI_API", "")
 GEMINI_KEY = os.environ.get("VBV_GEMINI_KEY", "")
-KLING_API  = os.environ.get("VBV_KLING_API", "")
+KLING_API  = os.environ.get("VBV_KLING_API", "https://api.vectorengine.ai")
 KLING_KEY  = os.environ.get("VBV_KLING_KEY", "")
 GPT_IMG_API = os.environ.get("VBV_GPT_IMG_API", "https://api.vectorengine.ai")
 GPT_IMG_KEY = os.environ.get("VBV_GPT_IMG_KEY", "")
@@ -682,23 +682,36 @@ def vary_prompt(base_prompt):
 def submit_kling(vid_id, frame_url, prompt, neg_prompt, duration):
     headers = {"Authorization": f"Bearer {KLING_KEY}", "Content-Type": "application/json"}
     full_neg = (neg_prompt or "blurry, text") + ", watermark, overlay text, subtitle, Chinese characters"
-    body = {
+
+    # VCE uses flat format (image_url at top level); ablai uses image_list.
+    # Try flat first, then image_list as fallback.
+    flat_body = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
         "negative_prompt": full_neg,
         "aspect_ratio": "9:16",
         "duration": kling_duration(duration),
-        "image_list": [{"image_url": frame_url, "type": "first_frame"}]
+        "image_url": frame_url,
     }
-    try:
-        r = http_session().post(f"{KLING_API}/kling/v1/videos/omni-video", headers=headers, json=body, timeout=60)
-        d = r.json()
-        tid = d.get("data", {}).get("task_id")
-        if tid:
-            return tid
-        print(f"  ⚠️ {vid_id} submit: {str(d)[:100]}")
-    except Exception as e:
-        print(f"  ⚠️ {vid_id} submit: {e}")
+    list_body = {
+        "model_name": "kling-v3-omni",
+        "prompt": prompt,
+        "negative_prompt": full_neg,
+        "aspect_ratio": "9:16",
+        "duration": kling_duration(duration),
+        "image_list": [{"image_url": frame_url, "type": "first_frame"}],
+    }
+
+    for label, body in [("flat", flat_body), ("list", list_body)]:
+        try:
+            r = http_session().post(f"{KLING_API}/kling/v1/videos/omni-video", headers=headers, json=body, timeout=60)
+            d = r.json()
+            tid = d.get("data", {}).get("task_id")
+            if tid:
+                return tid
+            print(f"  ⚠️ {vid_id} submit ({label}): {str(d)[:120]}")
+        except Exception as e:
+            print(f"  ⚠️ {vid_id} submit ({label}): {e}")
     return None
 
 
